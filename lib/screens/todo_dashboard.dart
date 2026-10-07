@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:todo_app/models/task_model.dart';
 import 'package:todo_app/provider/auth_provider.dart';
+import 'package:todo_app/provider/notification_provider.dart';
 import 'package:todo_app/provider/task_provider.dart';
 import 'package:todo_app/widgets/app_colors.dart';
 import 'package:todo_app/widgets/task_dialog.dart';
@@ -33,30 +34,92 @@ class _TodoDashboardState extends ConsumerState<TodoDashboard> {
 
   String? get _uid => ref.read(authStateProvider).valueOrNull?.uid;
 
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _addTask() async {
     final task = await showAddTaskDialog(context);
     final uid = _uid;
     if (task == null || uid == null) return;
+
     await ref.read(taskServiceProvider).addTask(uid, task);
+
+    final when = task.reminderAt;
+    if (when == null) return;
+
+    final notifier = ref.read(notificationServiceProvider);
+    final allowed = await notifier.requestPermission();
+    if (!allowed) {
+      _snack(
+        'Task saved, but notifications are blocked. Enable them in system settings to get reminders.',
+      );
+      return;
+    }
+
+    final scheduled = await notifier.scheduleReminder(
+      id: task.notificationId,
+      title: task.title,
+      body: task.description.isEmpty
+          ? 'Time to do your task!'
+          : task.description,
+      when: when,
+      askExactAlarm: true,
+    );
+    _snack(
+      scheduled
+          ? 'Reminder set'
+          : 'Task saved, but the reminder could not be scheduled.',
+    );
   }
 
   Future<void> _advanceStatus(TaskModel task) async {
     final uid = _uid;
     if (uid == null) return;
-    await ref
-        .read(taskServiceProvider)
-        .updateStatus(uid, task.id, task.nextStatus);
+
+    final next = task.nextStatus;
+    await ref.read(taskServiceProvider).updateStatus(uid, task.id, next);
+
+    final notifier = ref.read(notificationServiceProvider);
+    if (next == TaskStatus.done) {
+      await notifier.cancel(task.notificationId);
+    } else if (task.status == TaskStatus.done && task.reminderAt != null) {
+      await notifier.scheduleReminder(
+        id: task.notificationId,
+        title: task.title,
+        body: task.description.isEmpty
+            ? 'Time to do your task!'
+            : task.description,
+        when: task.reminderAt!,
+      );
+    }
   }
 
   Future<void> _deleteTask(TaskModel task) async {
     final uid = _uid;
     if (uid == null) return;
+    await ref.read(notificationServiceProvider).cancel(task.notificationId);
     await ref.read(taskServiceProvider).deleteTask(uid, task.id);
+  }
+
+  Future<void> _logout() async {
+    
+    await ref.read(notificationServiceProvider).cancelAll();
+    await ref.read(authServiceProvider).signOut();
   }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+
+    ref.listen<AsyncValue<List<TaskModel>>>(tasksProvider, (_, next) {
+      final list = next.valueOrNull;
+      if (list != null)
+        ref.read(notificationServiceProvider).syncReminders(list);
+    });
     final username =
         ref.watch(userProfileProvider).valueOrNull?.username ?? 'User';
     final tasksAsync = ref.watch(tasksProvider);
@@ -88,7 +151,7 @@ class _TodoDashboardState extends ConsumerState<TodoDashboard> {
                 children: [
                   PopupMenuButton<String>(
                     icon: const Icon(Icons.menu_rounded, color: kTextDark),
-                    onSelected: (_) => ref.read(authServiceProvider).signOut(),
+                    onSelected: (_) => _logout(),
                     itemBuilder: (_) => const [
                       PopupMenuItem(value: 'logout', child: Text('Log out')),
                     ],
@@ -295,12 +358,31 @@ class _TodoDashboardState extends ConsumerState<TodoDashboard> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  task.time,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (task.hasUpcomingReminder)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 4),
+                          child: Icon(
+                            Icons.notifications_active,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      Flexible(
+                        child: Text(
+                          task.time,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 Text(

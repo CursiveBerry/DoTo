@@ -6,8 +6,10 @@ class TaskModel {
   final String id;
   final String title;
   final String description;
-  final String time;
+  final String time; 
   final TaskStatus status;
+  final DateTime? reminderAt; 
+  final int notificationId;
 
   const TaskModel({
     required this.id,
@@ -15,6 +17,8 @@ class TaskModel {
     required this.description,
     required this.time,
     this.status = TaskStatus.todo,
+    this.reminderAt,
+    this.notificationId = 0,
   });
 
   Map<String, dynamic> toMap() => {
@@ -22,6 +26,8 @@ class TaskModel {
     'description': description,
     'time': time,
     'status': status.name,
+    'reminderAt': reminderAt == null ? null : Timestamp.fromDate(reminderAt!),
+    'notificationId': notificationId,
     'createdAt': FieldValue.serverTimestamp(),
   };
 
@@ -36,9 +42,16 @@ class TaskModel {
         (s) => s.name == data['status'],
         orElse: () => TaskStatus.todo,
       ),
+      reminderAt: (data['reminderAt'] as Timestamp?)?.toDate(),
+      notificationId: (data['notificationId'] as num?)?.toInt() ?? 0,
     );
   }
 
   TaskStatus get nextStatus =>
       TaskStatus.values[(status.index + 1) % TaskStatus.values.length];
+
+  bool get hasUpcomingReminder =>
+      reminderAt != null &&
+      reminderAt!.isAfter(DateTime.now()) &&
+      status != TaskStatus.done;
 }

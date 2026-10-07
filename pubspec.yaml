@@ -43,6 +43,8 @@ dependencies:
   shared_preferences: ^2.5.5
   flutter_riverpod: ^2.6.1
   cloud_firestore: ^6.8.0
+  flutter_local_notifications: ^19.0.0
+  timezone: ^0.10.0
 
 dev_dependencies:
   flutter_test:
